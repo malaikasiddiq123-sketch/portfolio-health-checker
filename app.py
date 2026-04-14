@@ -148,7 +148,7 @@ if data_hub:
         # 1. Calculation: Calculate percentage change and handle empty data
         # Note: Using ffill() ensures we don't drop days due to minor data gaps
         all_rets = pd.DataFrame({t: data_hub[t]['data']['Close'].pct_change() for t in data_hub})
-        all_rets = all_rets.fillna(method='ffill').dropna()
+        all_rets = all_rets.ffill().dropna()
         
         # Check if we have sufficient data to perform analysis
         if not all_rets.empty:
