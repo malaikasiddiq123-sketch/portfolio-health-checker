@@ -143,73 +143,105 @@ if data_hub:
             st.markdown(f"Summary: {info.get('longBusinessSummary', 'N/A')[:250]}...")
 
     with tabs[1]:
-        st.subheader("Portfolio Health Analysis")
+        st.subheader("Portfolio Risk & Health Analysis")
         
-        # 1. Calculation: Calculate percentage change and handle empty data
-        # Note: Using ffill() ensures we don't drop days due to minor data gaps
+        # --- 1. CORE CALCULATIONS ---
         all_rets = pd.DataFrame({t: data_hub[t]['data']['Close'].pct_change() for t in data_hub})
         all_rets = all_rets.ffill().dropna()
         
-        # Check if we have sufficient data to perform analysis
         if not all_rets.empty:
-            # Volatility (Risk) = Annualized Standard Deviation
             volatility = all_rets.std() * np.sqrt(252) * 100
-            # Annualized Return = Mean Return
             returns = all_rets.mean() * 252 * 100
-            
-            risk_return = pd.DataFrame({'Risk': volatility, 'Return': returns})
-            
-            # --- RISK-RETURN SCATTER PLOT ---
-            fig_risk = go.Figure()
-            fig_risk.add_trace(go.Scatter(x=risk_return['Risk'], y=risk_return['Return'],
-                                          mode='markers+text', text=risk_return.index,
-                                          marker=dict(size=15, color=risk_return['Return'], colorscale='RdYlGn')))
-            fig_risk.update_layout(title="Risk vs Reward Analysis", xaxis_title="Risk (Annualized Volatility %)", 
-                                   yaxis_title="Return (Annualized %)", template="plotly_dark")
-            st.plotly_chart(fig_risk)
-
-            # --- STABILITY SCORE (Health Meter) ---
             avg_vol = volatility.mean()
-            # Calculate score: Lower volatility results in a higher stability score
             stability_score = max(0, min(100, 100 - (avg_vol * 2))) 
             
-            # Define status message based on score
-            if stability_score >= 70:
-                status = "Stable"
-            elif stability_score >= 40:
-                status = "Moderate Risk"
-            else:
-                status = "Risky"
+            risk_return = pd.DataFrame({'Risk': volatility, 'Return': returns})
+
+            # --- 2. RISK VS REWARD SCATTER PLOT (Restored to Top) ---
+            st.markdown("**Asset Performance Quadrant**")
+            fig_risk = go.Figure()
+            fig_risk.add_trace(go.Scatter(
+                x=risk_return['Risk'], 
+                y=risk_return['Return'],
+                mode='markers+text', 
+                text=risk_return.index,
+                textposition="top center",
+                marker=dict(size=14, color=risk_return['Return'], colorscale='RdYlGn', showscale=True, line=dict(width=1, color='white'))
+            ))
             
-            fig_gauge = go.Figure(go.Indicator(
-                mode="gauge+number", 
-                value=stability_score, 
-                title={'text': f"Portfolio Health: {status}"},
-                gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "cyan"},
-                       'steps': [{'range': [0, 40], 'color': "red"}, 
-                                 {'range': [40, 70], 'color': "orange"}, 
-                                 {'range': [70, 100], 'color': "green"}]}))
-            fig_gauge.update_layout(template="plotly_dark")
-            st.plotly_chart(fig_gauge)
-            
-            st.write(f"*Portfolio Summary:* Your average portfolio risk (volatility) is {avg_vol:.2f}%. " 
-                     f"Your portfolio is currently classified as *{status}*. "
-                     "A higher score indicates a more stable and balanced investment strategy.")
+            fig_risk.update_layout(
+                margin=dict(t=20, b=20),
+                xaxis_title="Risk (Annualized Volatility %)", 
+                yaxis_title="Return (Annualized %)", 
+                template="plotly_dark",
+                height=450
+            )
+            st.plotly_chart(fig_risk, use_container_width=True)
+
+            st.divider()
+
+            # --- 3. RISK COMPOSITION (Solid Pie Chart) ---
+            col_chart, col_metrics = st.columns([1.5, 1])
+
+            with col_chart:
+                risk_cats = ["Low Risk" if v < 20 else "Moderate Risk" if v < 40 else "High Risk" for v in volatility]
+                risk_counts = pd.Series(risk_cats).value_counts()
+                
+                # REPLACED: hole=0 ensures this is a solid Pie Chart, not a donut.
+                fig_pie = go.Figure(data=[go.Pie(
+                    labels=risk_counts.index, 
+                    values=risk_counts.values,
+                    marker=dict(colors=['#00ffcc', '#ffaa00', '#ff4b4b']),
+                    textinfo='label+percent',
+                    hole=0 
+                )])
+                
+                fig_pie.update_layout(
+                    title="Risk Exposure Distribution", 
+                    template="plotly_dark", 
+                    height=350, 
+                    margin=dict(t=30, b=0, l=0, r=0)
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            with col_metrics:
+                st.markdown("### Portfolio Health")
+                st.metric("Efficiency Score", f"{stability_score:.1f}/100")
+                st.metric("Avg. Volatility", f"{avg_vol:.2f}%")
+                
+                status_color = "#00ffcc" if stability_score >= 70 else "#ffaa00" if stability_score >= 40 else "#ff4b4b"
+                status = "STABLE" if stability_score >= 70 else "MODERATE" if stability_score >= 40 else "HIGH RISK"
+                st.markdown(f"**Current Profile:** <span style='color:{status_color}'>{status}</span>", unsafe_allow_html=True)
+
         else:
-            st.warning("Insufficient data available for calculation. Please try a longer 'Analysis Horizon' (e.g., 1y or 2y).")
+            st.warning("Insufficient data available for risk analysis.")
     with tabs[2]:
         st.subheader("Predictive Analytics Engine")
+        
         pred_data = []
         for t in data_hub:
             y = data_hub[t]['data']['Close'].values * curr_rate
             X = np.arange(len(y)).reshape(-1, 1)
+            
+            # Scikit-Learn Model
             model = LinearRegression().fit(X, y)
             next_price = model.predict([[len(y)]])[0]
-            pred_data.append({"Ticker": t, "Current": y[-1], "Predicted": next_price, "Confidence": model.score(X, y)})
+            
+            pred_data.append({
+                "Ticker": t, 
+                "Current": y[-1], 
+                "Predicted": next_price, 
+                "Confidence": model.score(X, y)
+            })
         
         df_pred = pd.DataFrame(pred_data).set_index("Ticker")
-        st.table(df_pred.style.format({"Current": f"{curr_symbol}{{:.2f}}", "Predicted": f"{curr_symbol}{{:.2f}}", "Confidence": "{:.2f}"}))
-
+        
+        # This matches the formatting in your project.png screenshot
+        st.table(df_pred.style.format({
+            "Current": f"{curr_symbol}{{:.2f}}", 
+            "Predicted": f"{curr_symbol}{{:.2f}}", 
+            "Confidence": "{:.2f}"
+        }))
     with tabs[3]:
         st.subheader("Historical Data")
         sel_raw = st.selectbox("Select Asset", tickers, key="raw_sel")
